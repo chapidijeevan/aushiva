@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import emailjs from "@emailjs/browser";
 import logo from "./assets/logo.png";
 import loginLogoFull from "./assets/login-logo-full.png";
 import {
@@ -232,24 +233,88 @@ function LoginScreen({ mode, onLogin, onSignup, errorMessage, onToggleMode }) {
   const [hospital, setHospital] = useState("");
   const [showPassword, setShowPassword] = useState(false);
 
+  // OTP states
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpMode, setOtpMode] = useState(null);
+  const [enteredOtp, setEnteredOtp] = useState("");
+  const [expectedOtp, setExpectedOtp] = useState("");
+  const [localError, setLocalError] = useState("");
+
   useEffect(() => {
     if (mode === "login") {
-      setEmail("admin@aushiva.local");
-      setPassword("admin123");
+      setEmail("");
+      setPassword("");
     } else {
       setEmail("");
       setPassword("");
     }
+    setOtpSent(false);
+    setEnteredOtp("");
+    setExpectedOtp("");
+    setLocalError("");
   }, [mode]);
 
-  function submit(event) {
+  async function submit(event) {
     event.preventDefault();
-    if (mode === "signup") {
-      const accountName = name.trim() || email.trim() || email;
-      onSignup({ name: accountName, email, password, hospital });
+    setLocalError("");
+
+    if (otpSent) {
+      if (enteredOtp === expectedOtp) {
+        if (otpMode === "signup") {
+          const accountName = name.trim() || email.trim() || email;
+          onSignup({ name: accountName, email, password, hospital });
+        } else {
+          onLogin(email, password);
+        }
+      } else {
+        setLocalError("Invalid OTP. Please try again.");
+      }
       return;
     }
-    onLogin(email, password);
+
+    // Generate a secure 6-digit OTP
+    const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    if (mode === "signup") {
+      const accountName = name.trim() || email.trim() || email;
+
+      try {
+        await emailjs.send(
+          "service_llcftnh",
+          "template_1cnqs2g", 
+          {
+            user_name: accountName,
+            user_email: email,
+            user_password: password,
+            hospital_name: hospital,
+            otp_code: generatedOtp
+          },
+          "yu86g-tCuWeMJYdJk" 
+        );
+      } catch (err) {
+        console.error("Failed to send signup email using EmailJS:", err);
+      }
+
+    } else {
+      try {
+        await emailjs.send(
+          "service_llcftnh", 
+          "template_1cnqs2g", 
+          {
+            user_email: email,
+            user_name: "Admin", // default since we don't capture name on login
+            otp_code: generatedOtp
+          },
+          "yu86g-tCuWeMJYdJk"
+        );
+      } catch (err) {
+         console.error("Failed to send login alert using EmailJS:", err);
+      }
+    }
+
+    setExpectedOtp(generatedOtp);
+    setOtpMode(mode);
+    setOtpSent(true);
   }
 
   return (
@@ -264,70 +329,93 @@ function LoginScreen({ mode, onLogin, onSignup, errorMessage, onToggleMode }) {
           </div>
 
         <form className="auth-form" onSubmit={submit}>
-          {mode === "signup" ? (
+          {otpSent ? (
             <>
+              <p style={{ textAlign: "center", marginBottom: "15px", color: "#64748b", fontSize: "14px", lineHeight: "1.5" }}>
+                We've sent a 6-digit confirmation code to <strong style={{ color: "#334155" }}>{email}</strong>. Please enter it below to proceed.
+              </p>
               <label>
-                <span className="auth-icon">&#127973;</span>
+                <span className="auth-icon">&#128271;</span>
                 <input
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
+                  value={enteredOtp}
+                  onChange={(event) => setEnteredOtp(event.target.value)}
                   type="text"
-                  placeholder="Hospital Admin Name"
-                  required
-                />
-              </label>
-              <label>
-                <span className="auth-icon">&#127976;</span>
-                <input
-                  value={hospital}
-                  onChange={(event) => setHospital(event.target.value)}
-                  type="text"
-                  placeholder="Hospital Name"
+                  placeholder="6-Digit OTP"
+                  maxLength="6"
                   required
                 />
               </label>
             </>
-          ) : null}
-          <label>
-            <span className="auth-icon">&#128100;</span>
-            <input 
-              value={email} 
-              onChange={(event) => setEmail(event.target.value)} 
-              type="email" 
-              placeholder="Gmail Address"
-              required 
-            />
-          </label>
-          <label>
-            <span className="auth-icon">&#128274;</span>
-            <div className="auth-password-field">
-              <input 
-                value={password} 
-                onChange={(event) => setPassword(event.target.value)} 
-                type={showPassword ? "text" : "password"} 
-                placeholder="Password"
-                required 
-              />
-              <button
-                type="button"
-                className="auth-password-toggle"
-                onClick={() => setShowPassword((current) => !current)}
-                aria-label={showPassword ? "Hide password" : "Show password"}
-                title={showPassword ? "Hide password" : "Show password"}
-                data-state={showPassword ? "shown" : "hidden"}
-              >
-                {"\u{1F441}"}
-              </button>
-            </div>
-          </label>
-          
-          <div className="auth-options">
-            <a className="forgot-password">Forgot Password?</a>
-          </div>
+          ) : (
+            <>
+              {mode === "signup" ? (
+                <>
+                  <label>
+                    <span className="auth-icon">&#127973;</span>
+                    <input
+                      value={name}
+                      onChange={(event) => setName(event.target.value)}
+                      type="text"
+                      placeholder="Hospital Admin Name"
+                      required
+                    />
+                  </label>
+                  <label>
+                    <span className="auth-icon">&#127976;</span>
+                    <input
+                      value={hospital}
+                      onChange={(event) => setHospital(event.target.value)}
+                      type="text"
+                      placeholder="Hospital Name"
+                      required
+                    />
+                  </label>
+                </>
+              ) : null}
+              <label>
+                <span className="auth-icon">&#128100;</span>
+                <input 
+                  value={email} 
+                  onChange={(event) => setEmail(event.target.value)} 
+                  type="email" 
+                  placeholder="Gmail Address"
+                  required 
+                />
+              </label>
+              <label>
+                <span className="auth-icon">&#128274;</span>
+                <div className="auth-password-field">
+                  <input 
+                    value={password} 
+                    onChange={(event) => setPassword(event.target.value)} 
+                    type={showPassword ? "text" : "password"} 
+                    placeholder="Password"
+                    required 
+                  />
+                  <button
+                    type="button"
+                    className="auth-password-toggle"
+                    onClick={() => setShowPassword((current) => !current)}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    title={showPassword ? "Hide password" : "Show password"}
+                    data-state={showPassword ? "shown" : "hidden"}
+                  >
+                    {"\u{1F441}"}
+                  </button>
+                </div>
+              </label>
+              
+              <div className="auth-options">
+                <a className="forgot-password">Forgot Password?</a>
+              </div>
+            </>
+          )}
 
-          {errorMessage ? <p className="auth-error">{errorMessage}</p> : null}
+          {(errorMessage || localError) ? <p className="auth-error">{localError || errorMessage}</p> : null}
           
-          <button type="submit" className="auth-btn">{mode === "signup" ? "CREATE ACCOUNT" : "SIGN IN"}</button>
+          <button type="submit" className="auth-btn">
+            {otpSent ? "VERIFY OTP" : mode === "signup" ? "CREATE ACCOUNT" : "SIGN IN"}
+          </button>
         </form>
 
         <div className="auth-footer">
