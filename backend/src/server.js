@@ -240,10 +240,10 @@ app.get("/api/session", (req, res) => {
 
 import path from "path";
 
-app.use(express.static(path.join(process.cwd(), "dist")));
+app.use(express.static(path.join(process.cwd(), "../dist")));
 
 app.get("*", (req, res) => {
-  res.sendFile(path.join(process.cwd(), "dist", "index.html"));
+  res.sendFile(path.join(process.cwd(), "../dist", "index.html"));
 });
 
 const PORT = process.env.PORT || 5050;
