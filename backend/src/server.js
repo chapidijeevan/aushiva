@@ -238,15 +238,18 @@ app.get("/api/session", (req, res) => {
   res.status(200).json({ email: session.email, name: session.name, role: session.role, hospital: session.hospital || "" });
 });
 
-app.use((req, res) => {
-  res.status(404).json({ error: "Not Found" });
+import path from "path";
+
+app.use(express.static(path.join(process.cwd(), "dist")));
+
+app.get("*", (req, res) => {
+  res.sendFile(path.join(process.cwd(), "dist", "index.html"));
 });
 
-const port = process.env.PORT ? Number(process.env.PORT) : 5050;
+const PORT = process.env.PORT || 5050;
 
 await initDb();
 
-app.listen(port, () => {
-  // eslint-disable-next-line no-console
-  console.log(`Backend listening on http://localhost:${port}`);
+app.listen(PORT, () => {
+  console.log(`Backend listening on port ${PORT}`);
 });
