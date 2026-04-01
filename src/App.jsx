@@ -258,6 +258,7 @@ function LoginScreen({ mode, onLogin, onSignup, errorMessage, onToggleMode }) {
   async function submit(event) {
     event.preventDefault();
     setLocalError("");
+    setLoading(true);
 
     if (otpSent) {
       if (enteredOtp === expectedOtp) {
@@ -301,6 +302,9 @@ function LoginScreen({ mode, onLogin, onSignup, errorMessage, onToggleMode }) {
         );
       } catch (err) {
         console.error("Failed to send signup email using EmailJS:", err);
+        setLocalError("Failed to send verification email. Please try again.");
+        setLoading(false);
+        return;
       }
 
     } else {
@@ -317,6 +321,9 @@ function LoginScreen({ mode, onLogin, onSignup, errorMessage, onToggleMode }) {
         );
       } catch (err) {
          console.error("Failed to send login alert using EmailJS:", err);
+         setLocalError("Failed to send login alert. Please try again.");
+         setLoading(false);
+         return;
       }
     }
 

@@ -31,7 +31,7 @@ function normalizeMedicine(row) {
     quantity: row.quantity,
     unit: row.unit,
     expiry: row.expiry,
-    manufacturingDate: row.manufacturingDate || row.manufacturingdate,
+    manufacturingDate: row.manufacturingdate || row.manufacturingDate,
     hospital: row.hospital,
     price: row.price,
     status: row.status,
@@ -43,8 +43,11 @@ function normalizeMedicine(row) {
 }
 
 function serializeMedicine(medicine) {
+  // Map manufacturingDate to lowercase for Postgres compatibility
+  const { manufacturingDate, ...rest } = medicine;
   return {
-    ...medicine,
+    ...rest,
+    manufacturingdate: manufacturingDate,
     excess: medicine.excess ? true : false,
     reorderLevel: Number.isFinite(medicine.reorderLevel) ? medicine.reorderLevel : null
   };
