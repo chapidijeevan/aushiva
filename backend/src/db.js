@@ -8,11 +8,26 @@ export async function initDb() {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     console.warn("DATABASE_URL is not set. The database connection will fail if queried.");
+    return;
   }
+  
+  // Explicitly constructing the pool options to force SSL ignore
   pool = new Pool({
     connectionString,
-    ssl: { rejectUnauthorized: false }
+    ssl: {
+      rejectUnauthorized: false
+    }
   });
+  
+  // Test the connection immediately to catch errors early
+  try {
+    const client = await pool.connect();
+    client.release();
+    console.log("Database connection successful.");
+  } catch (err) {
+    console.error("Failed to connect to database:", err.message);
+    // Don't throw here, let individual queries show/handle the error
+  }
 }
 
 function processSql(sqliteQuery) {
