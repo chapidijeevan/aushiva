@@ -239,6 +239,7 @@ function LoginScreen({ mode, onLogin, onSignup, errorMessage, onToggleMode }) {
   const [enteredOtp, setEnteredOtp] = useState("");
   const [expectedOtp, setExpectedOtp] = useState("");
   const [localError, setLocalError] = useState("");
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (mode === "login") {
@@ -260,11 +261,18 @@ function LoginScreen({ mode, onLogin, onSignup, errorMessage, onToggleMode }) {
 
     if (otpSent) {
       if (enteredOtp === expectedOtp) {
-        if (otpMode === "signup") {
-          const accountName = name.trim() || email.trim() || email;
-          onSignup({ name: accountName, email, password, hospital });
-        } else {
-          onLogin(email, password);
+        setLoading(true);
+        try {
+          if (otpMode === "signup") {
+            const accountName = name.trim() || email.trim() || email;
+            await onSignup({ name: accountName, email, password, hospital });
+          } else {
+            await onLogin(email, password);
+          }
+        } catch (err) {
+          setLocalError(err.message || "Authentication failed. Please try again.");
+        } finally {
+          setLoading(false);
         }
       } else {
         setLocalError("Invalid OTP. Please try again.");
@@ -315,6 +323,7 @@ function LoginScreen({ mode, onLogin, onSignup, errorMessage, onToggleMode }) {
     setExpectedOtp(generatedOtp);
     setOtpMode(mode);
     setOtpSent(true);
+    setLoading(false);
   }
 
   return (
@@ -413,8 +422,8 @@ function LoginScreen({ mode, onLogin, onSignup, errorMessage, onToggleMode }) {
 
           {(errorMessage || localError) ? <p className="auth-error">{localError || errorMessage}</p> : null}
           
-          <button type="submit" className="auth-btn">
-            {otpSent ? "VERIFY OTP" : mode === "signup" ? "CREATE ACCOUNT" : "SIGN IN"}
+          <button type="submit" className="auth-btn" disabled={loading}>
+            {loading ? "PROCESSING..." : (otpSent ? "VERIFY OTP" : mode === "signup" ? "CREATE ACCOUNT" : "SIGN IN")}
           </button>
         </form>
 
@@ -982,23 +991,31 @@ export default function App() {
   }
 
   async function handleLogin(email, password) {
-    const result = await login(email, password);
-    if (!result.ok) {
-      setAuthError(result.message);
-      return;
+    try {
+      const result = await login(email, password);
+      if (!result.ok) {
+        setAuthError(result.message);
+        return;
+      }
+      setAuthError("");
+      setSession(result.session);
+    } catch (err) {
+      setAuthError(err.message || "An error occurred during login.");
     }
-    setAuthError("");
-    setSession(result.session);
   }
 
   async function handleSignup(payload) {
-    const result = await signup(payload);
-    if (!result.ok) {
-      setAuthError(result.message);
-      return;
+    try {
+      const result = await signup(payload);
+      if (!result.ok) {
+        setAuthError(result.message);
+        return;
+      }
+      setAuthError("");
+      setSession(result.session);
+    } catch (err) {
+      setAuthError(err.message || "An error occurred during signup.");
     }
-    setAuthError("");
-    setSession(result.session);
   }
 
   async function handleLogout() {
