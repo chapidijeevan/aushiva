@@ -1,99 +1,117 @@
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
-import initSqlJs from "sql.js";
+import pg from "pg";
 
-const currentDir = path.dirname(fileURLToPath(import.meta.url));
-const backendRoot = path.resolve(currentDir, "..");
-const dataDir = path.join(backendRoot, "data");
-const dbPath = process.env.DB_PATH || path.join(dataDir, "aushiva.db");
-
-let db;
+const { Pool } = pg;
+let pool;
 
 export async function initDb() {
-  if (db) return;
-  fs.mkdirSync(dataDir, { recursive: true });
-
-  const SQL = await initSqlJs({
-    locateFile: (file) => path.join(backendRoot, "node_modules", "sql.js", "dist", file)
+  if (pool) return;
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    console.warn("DATABASE_URL is not set. The database connection will fail if queried.");
+  }
+  pool = new Pool({
+    connectionString,
+    ssl: { rejectUnauthorized: false }
   });
-
-  const fileBuffer = fs.existsSync(dbPath) ? fs.readFileSync(dbPath) : null;
-  db = new SQL.Database(fileBuffer);
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS medicines (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      barcode TEXT NOT NULL,
-      name TEXT NOT NULL,
-      batch TEXT NOT NULL,
-      manufacturer TEXT NOT NULL,
-      category TEXT NOT NULL,
-      quantity INTEGER NOT NULL,
-      unit TEXT NOT NULL,
-      expiry TEXT NOT NULL,
-      manufacturingDate TEXT NOT NULL,
-      hospital TEXT NOT NULL,
-      price REAL NOT NULL,
-      status TEXT NOT NULL,
-      excess INTEGER NOT NULL DEFAULT 0,
-      reorderLevel INTEGER,
-      UNIQUE(barcode, hospital)
-    );
-
-    CREATE TABLE IF NOT EXISTS exchange_requests (
-      id TEXT PRIMARY KEY,
-      barcode TEXT NOT NULL,
-      name TEXT NOT NULL,
-      quantity INTEGER NOT NULL,
-      unit TEXT NOT NULL,
-      fromHospital TEXT NOT NULL,
-      targetHospital TEXT NOT NULL,
-      status TEXT NOT NULL,
-      direction TEXT NOT NULL,
-      requestedAt TEXT NOT NULL,
-      declineReason TEXT NOT NULL DEFAULT "",
-      declinedBy TEXT NOT NULL DEFAULT "[]"
-    );
-
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      email TEXT UNIQUE NOT NULL,
-      password TEXT NOT NULL,
-      role TEXT NOT NULL,
-      hospital TEXT NOT NULL DEFAULT ""
-    );
-
-    CREATE TABLE IF NOT EXISTS sessions (
-      id TEXT PRIMARY KEY,
-      email TEXT NOT NULL,
-      name TEXT NOT NULL,
-      role TEXT NOT NULL,
-      hospital TEXT NOT NULL,
-      createdAt TEXT NOT NULL
-    );
-  `);
-  ensureSchema();
-  persistDb();
 }
 
-export function listMedicines() {
-  return selectAll("SELECT * FROM medicines ORDER BY name ASC").map(normalizeMedicine);
+function processSql(sqliteQuery) {
+  let query = sqliteQuery;
+  let paramCount = 1;
+  while (query.includes('?')) {
+    query = query.replace('?', `$${paramCount++}`);
+  }
+  return query;
 }
 
-export function getMedicineByBarcode(barcode) {
-  const row = selectOne("SELECT * FROM medicines WHERE barcode = ?", [barcode]);
+function normalizeMedicine(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    barcode: row.barcode,
+    name: row.name,
+    batch: row.batch,
+    manufacturer: row.manufacturer,
+    category: row.category,
+    quantity: row.quantity,
+    unit: row.unit,
+    expiry: row.expiry,
+    manufacturingDate: row.manufacturingdate || row.manufacturingDate,
+    hospital: row.hospital,
+    price: row.price,
+    status: row.status,
+    excess: Boolean(row.excess),
+    reorderLevel: row.reorderlevel !== undefined && row.reorderlevel !== null 
+                  ? row.reorderlevel 
+                  : (row.reorderLevel === null ? undefined : row.reorderLevel)
+  };
+}
+
+function serializeMedicine(medicine) {
+  return {
+    ...medicine,
+    excess: medicine.excess ? 1 : 0,
+    reorderLevel: Number.isFinite(medicine.reorderLevel) ? medicine.reorderLevel : null
+  };
+}
+
+function normalizeRequest(row) {
+  if (!row) return null;
+  let declinedBy = [];
+  try {
+    const raw = row.declinedby || row.declinedBy;
+    declinedBy = raw ? (typeof raw === "string" ? JSON.parse(raw) : raw) : [];
+  } catch {
+    declinedBy = [];
+  }
+  return {
+    id: row.id,
+    barcode: row.barcode,
+    name: row.name,
+    quantity: row.quantity,
+    unit: row.unit,
+    fromHospital: row.fromhospital || row.fromHospital,
+    targetHospital: row.targethospital || row.targetHospital,
+    status: row.status,
+    direction: row.direction,
+    requestedAt: row.requestedat || row.requestedAt,
+    declineReason: row.declinereason || row.declineReason,
+    declinedBy
+  };
+}
+
+async function selectAll(sql, params = []) {
+  const result = await pool.query(processSql(sql), params);
+  return result.rows;
+}
+
+async function selectOne(sql, params = []) {
+  const result = await pool.query(processSql(sql), params);
+  return result.rows.length ? result.rows[0] : null;
+}
+
+async function run(sql, params = []) {
+  await pool.query(processSql(sql), params);
+}
+
+export async function listMedicines() {
+  const rows = await selectAll("SELECT * FROM medicines ORDER BY name ASC");
+  return rows.map(normalizeMedicine);
+}
+
+export async function getMedicineByBarcode(barcode) {
+  const row = await selectOne("SELECT * FROM medicines WHERE barcode = ?", [barcode]);
   return row ? normalizeMedicine(row) : null;
 }
 
-export function getMedicineByBarcodeAndHospital(barcode, hospital) {
-  const row = selectOne("SELECT * FROM medicines WHERE barcode = ? AND hospital = ?", [barcode, hospital]);
+export async function getMedicineByBarcodeAndHospital(barcode, hospital) {
+  const row = await selectOne("SELECT * FROM medicines WHERE barcode = ? AND hospital = ?", [barcode, hospital]);
   return row ? normalizeMedicine(row) : null;
 }
 
-export function createMedicine(medicine) {
+export async function createMedicine(medicine) {
   const payload = serializeMedicine(medicine);
-  run(
+  await run(
     `INSERT INTO medicines (
       barcode, name, batch, manufacturer, category, quantity, unit, expiry, manufacturingDate,
       hospital, price, status, excess, reorderLevel
@@ -115,14 +133,13 @@ export function createMedicine(medicine) {
       payload.reorderLevel
     ]
   );
-  persistDb();
   return getMedicineByBarcodeAndHospital(medicine.barcode, medicine.hospital);
 }
 
-export function updateMedicine(barcode, medicine, originalHospital) {
+export async function updateMedicine(barcode, medicine, originalHospital) {
   const payload = serializeMedicine({ ...medicine, barcode });
   const lookupHospital = originalHospital || payload.hospital;
-  run(
+  await run(
     `UPDATE medicines SET
       name = ?,
       batch = ?,
@@ -156,16 +173,15 @@ export function updateMedicine(barcode, medicine, originalHospital) {
       lookupHospital
     ]
   );
-  persistDb();
   return getMedicineByBarcodeAndHospital(payload.barcode, payload.hospital);
 }
 
-export function updateMedicineForHospital(barcode, hospital, updates) {
-  const current = getMedicineByBarcodeAndHospital(barcode, hospital);
+export async function updateMedicineForHospital(barcode, hospital, updates) {
+  const current = await getMedicineByBarcodeAndHospital(barcode, hospital);
   if (!current) return null;
   const next = { ...current, ...updates, barcode, hospital };
   const payload = serializeMedicine(next);
-  run(
+  await run(
     `UPDATE medicines SET
       name = ?,
       batch = ?,
@@ -199,27 +215,24 @@ export function updateMedicineForHospital(barcode, hospital, updates) {
       payload.hospital
     ]
   );
-  persistDb();
   return getMedicineByBarcodeAndHospital(barcode, hospital);
 }
 
-export function deleteMedicine(barcode) {
-  run("DELETE FROM medicines WHERE barcode = ?", [barcode]);
-  persistDb();
+export async function deleteMedicine(barcode) {
+  await run("DELETE FROM medicines WHERE barcode = ?", [barcode]);
 }
 
-export function deleteMedicineForHospital(barcode, hospital) {
-  run("DELETE FROM medicines WHERE barcode = ? AND hospital = ?", [barcode, hospital]);
-  persistDb();
+export async function deleteMedicineForHospital(barcode, hospital) {
+  await run("DELETE FROM medicines WHERE barcode = ? AND hospital = ?", [barcode, hospital]);
 }
 
-export function replaceMedicines(medicines) {
-  run("BEGIN TRANSACTION");
+export async function replaceMedicines(medicines) {
+  await run("BEGIN");
   try {
-    run("DELETE FROM medicines");
-    medicines.forEach((medicine) => {
+    await run("DELETE FROM medicines");
+    for (const medicine of medicines) {
       const payload = serializeMedicine(medicine);
-      run(
+      await run(
         `INSERT INTO medicines (
           barcode, name, batch, manufacturer, category, quantity, unit, expiry, manufacturingDate,
           hospital, price, status, excess, reorderLevel
@@ -241,26 +254,26 @@ export function replaceMedicines(medicines) {
           payload.reorderLevel
         ]
       );
-    });
-    run("COMMIT");
+    }
+    await run("COMMIT");
   } catch (error) {
-    run("ROLLBACK");
+    await run("ROLLBACK");
     throw error;
   }
-  persistDb();
 }
 
-export function listExchangeRequests() {
-  return selectAll("SELECT * FROM exchange_requests ORDER BY requestedAt DESC").map(normalizeRequest);
+export async function listExchangeRequests() {
+  const rows = await selectAll("SELECT * FROM exchange_requests ORDER BY requestedAt DESC");
+  return rows.map(normalizeRequest);
 }
 
-export function getExchangeRequest(id) {
-  const row = selectOne("SELECT * FROM exchange_requests WHERE id = ?", [id]);
+export async function getExchangeRequest(id) {
+  const row = await selectOne("SELECT * FROM exchange_requests WHERE id = ?", [id]);
   return row ? normalizeRequest(row) : null;
 }
 
-export function createExchangeRequest(request) {
-  run(
+export async function createExchangeRequest(request) {
+  await run(
     `INSERT INTO exchange_requests (
       id, barcode, name, quantity, unit, fromHospital, targetHospital, status,
       direction, requestedAt, declineReason, declinedBy
@@ -280,12 +293,11 @@ export function createExchangeRequest(request) {
       JSON.stringify(request.declinedBy || [])
     ]
   );
-  persistDb();
   return getExchangeRequest(request.id);
 }
 
-export function fulfillExchangeRequest(id, decision, actorHospital) {
-  const current = getExchangeRequest(id);
+export async function fulfillExchangeRequest(id, decision, actorHospital) {
+  const current = await getExchangeRequest(id);
   if (!current) return { ok: false, error: "Exchange request not found." };
   if (current.status !== "Pending") {
     return { ok: false, error: "Request already processed." };
@@ -297,7 +309,7 @@ export function fulfillExchangeRequest(id, decision, actorHospital) {
       declinedBy.add(actorHospital);
     }
     const shouldFinalize = current.targetHospital !== "Any" && current.targetHospital === actorHospital;
-    const updated = updateExchangeRequest(id, {
+    const updated = await updateExchangeRequest(id, {
       status: shouldFinalize ? "Declined" : "Pending",
       declineReason: shouldFinalize ? decision.declineReason || "" : current.declineReason || "",
       declinedBy: Array.from(declinedBy)
@@ -313,7 +325,7 @@ export function fulfillExchangeRequest(id, decision, actorHospital) {
   if (!offerHospital) {
     return { ok: false, error: "No hospital selected to fulfill the request." };
   }
-  const updated = updateExchangeRequest(id, {
+  const updated = await updateExchangeRequest(id, {
     status: "Accepted",
     declineReason: "",
     targetHospital: offerHospital,
@@ -322,10 +334,10 @@ export function fulfillExchangeRequest(id, decision, actorHospital) {
   return { ok: true, request: updated };
 }
 
-export function updateExchangeRequest(id, updates) {
-  const current = getExchangeRequest(id);
+export async function updateExchangeRequest(id, updates) {
+  const current = await getExchangeRequest(id);
   if (!current) return null;
-  run(
+  await run(
     "UPDATE exchange_requests SET status = ?, declineReason = ?, declinedBy = ?, targetHospital = ? WHERE id = ?",
     [
       updates.status ?? current.status,
@@ -335,16 +347,15 @@ export function updateExchangeRequest(id, updates) {
       id
     ]
   );
-  persistDb();
   return getExchangeRequest(id);
 }
 
-export function replaceExchangeRequests(requests) {
-  run("BEGIN TRANSACTION");
+export async function replaceExchangeRequests(requests) {
+  await run("BEGIN");
   try {
-    run("DELETE FROM exchange_requests");
-    requests.forEach((request) => {
-      run(
+    await run("DELETE FROM exchange_requests");
+    for (const request of requests) {
+      await run(
         `INSERT INTO exchange_requests (
           id, barcode, name, quantity, unit, fromHospital, targetHospital, status,
           direction, requestedAt, declineReason, declinedBy
@@ -364,52 +375,49 @@ export function replaceExchangeRequests(requests) {
           JSON.stringify(request.declinedBy || [])
         ]
       );
-    });
-    run("COMMIT");
+    }
+    await run("COMMIT");
   } catch (error) {
-    run("ROLLBACK");
+    await run("ROLLBACK");
     throw error;
   }
-  persistDb();
 }
 
-export function countMedicines() {
-  const row = selectOne("SELECT COUNT(1) as count FROM medicines");
-  return row ? row.count : 0;
+export async function countMedicines() {
+  const row = await selectOne("SELECT COUNT(1) as count FROM medicines");
+  return row ? parseInt(row.count, 10) : 0;
 }
 
-export function countExchangeRequests() {
-  const row = selectOne("SELECT COUNT(1) as count FROM exchange_requests");
-  return row ? row.count : 0;
+export async function countExchangeRequests() {
+  const row = await selectOne("SELECT COUNT(1) as count FROM exchange_requests");
+  return row ? parseInt(row.count, 10) : 0;
 }
 
-export function getUserByEmail(email) {
+export async function getUserByEmail(email) {
   return selectOne("SELECT * FROM users WHERE email = ?", [email]);
 }
 
-export function ensureUser(user) {
-  const existing = getUserByEmail(user.email);
+export async function ensureUser(user) {
+  const existing = await getUserByEmail(user.email);
   if (!existing) {
-    run("INSERT INTO users (name, email, password, role, hospital) VALUES (?, ?, ?, ?, ?)", [
+    await run("INSERT INTO users (name, email, password, role, hospital) VALUES (?, ?, ?, ?, ?)", [
       user.name,
       user.email,
       user.password,
       user.role,
       user.hospital || ""
     ]);
-    persistDb();
     return getUserByEmail(user.email);
   }
   if (!existing.hospital && user.hospital) {
-    run("UPDATE users SET hospital = ? WHERE email = ?", [user.hospital, user.email]);
-    persistDb();
+    await run("UPDATE users SET hospital = ? WHERE email = ?", [user.hospital, user.email]);
     return getUserByEmail(user.email);
   }
   return existing;
 }
 
-export function createSession(session) {
-  run("INSERT INTO sessions (id, email, name, role, hospital, createdAt) VALUES (?, ?, ?, ?, ?, ?)", [
+export async function createSession(session) {
+  await run("INSERT INTO sessions (id, email, name, role, hospital, createdAt) VALUES (?, ?, ?, ?, ?, ?)", [
     session.id,
     session.email,
     session.name,
@@ -417,139 +425,17 @@ export function createSession(session) {
     session.hospital,
     session.createdAt
   ]);
-  persistDb();
   return session;
 }
 
-export function getSession(sessionId) {
+export async function getSession(sessionId) {
   return selectOne("SELECT * FROM sessions WHERE id = ?", [sessionId]);
 }
 
-export function deleteSession(sessionId) {
-  run("DELETE FROM sessions WHERE id = ?", [sessionId]);
-  persistDb();
+export async function deleteSession(sessionId) {
+  await run("DELETE FROM sessions WHERE id = ?", [sessionId]);
 }
 
-export function clearSessions() {
-  run("DELETE FROM sessions");
-  persistDb();
-}
-
-function selectAll(sql, params = []) {
-  const stmt = db.prepare(sql);
-  stmt.bind(params);
-  const rows = [];
-  while (stmt.step()) {
-    rows.push(stmt.getAsObject());
-  }
-  stmt.free();
-  return rows;
-}
-
-function selectOne(sql, params = []) {
-  const stmt = db.prepare(sql);
-  stmt.bind(params);
-  const row = stmt.step() ? stmt.getAsObject() : null;
-  stmt.free();
-  return row;
-}
-
-function run(sql, params = []) {
-  const stmt = db.prepare(sql);
-  stmt.run(params);
-  stmt.free();
-}
-
-function persistDb() {
-  const data = db.export();
-  fs.writeFileSync(dbPath, Buffer.from(data));
-}
-
-function ensureSchema() {
-  const medicineIndex = selectAll("PRAGMA index_list(medicines)");
-  const hasCompositeUnique = medicineIndex.some((idx) => {
-    if (!idx.unique) return false;
-    const columns = selectAll(`PRAGMA index_info(${idx.name})`).map((col) => col.name);
-    return columns.length === 2 && columns.includes("barcode") && columns.includes("hospital");
-  });
-  if (!hasCompositeUnique) {
-    run("BEGIN TRANSACTION");
-    try {
-      run(`
-        CREATE TABLE IF NOT EXISTS medicines_new (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          barcode TEXT NOT NULL,
-          name TEXT NOT NULL,
-          batch TEXT NOT NULL,
-          manufacturer TEXT NOT NULL,
-          category TEXT NOT NULL,
-          quantity INTEGER NOT NULL,
-          unit TEXT NOT NULL,
-          expiry TEXT NOT NULL,
-          manufacturingDate TEXT NOT NULL,
-          hospital TEXT NOT NULL,
-          price REAL NOT NULL,
-          status TEXT NOT NULL,
-          excess INTEGER NOT NULL DEFAULT 0,
-          reorderLevel INTEGER,
-          UNIQUE(barcode, hospital)
-        );
-      `);
-      run(`
-        INSERT INTO medicines_new (id, barcode, name, batch, manufacturer, category, quantity, unit, expiry, manufacturingDate, hospital, price, status, excess, reorderLevel)
-        SELECT id, barcode, name, batch, manufacturer, category, quantity, unit, expiry, manufacturingDate, hospital, price, status, excess, reorderLevel
-        FROM medicines;
-      `);
-      run("DROP TABLE medicines");
-      run("ALTER TABLE medicines_new RENAME TO medicines");
-      run("COMMIT");
-    } catch (error) {
-      run("ROLLBACK");
-      throw error;
-    }
-  }
-
-  const userColumns = selectAll("PRAGMA table_info(users)").map((row) => row.name);
-  if (!userColumns.includes("hospital")) {
-    run("ALTER TABLE users ADD COLUMN hospital TEXT NOT NULL DEFAULT ''");
-  }
-
-  const sessionColumns = selectAll("PRAGMA table_info(sessions)").map((row) => row.name);
-  if (!sessionColumns.includes("hospital")) {
-    run("ALTER TABLE sessions ADD COLUMN hospital TEXT NOT NULL DEFAULT ''");
-  }
-
-  const exchangeColumns = selectAll("PRAGMA table_info(exchange_requests)").map((row) => row.name);
-  if (!exchangeColumns.includes("declinedBy")) {
-    run("ALTER TABLE exchange_requests ADD COLUMN declinedBy TEXT NOT NULL DEFAULT '[]'");
-  }
-}
-
-function normalizeMedicine(row) {
-  return {
-    ...row,
-    excess: Boolean(row.excess),
-    reorderLevel: row.reorderLevel === null ? undefined : row.reorderLevel
-  };
-}
-
-function serializeMedicine(medicine) {
-  return {
-    ...medicine,
-    excess: medicine.excess ? 1 : 0,
-    reorderLevel: Number.isFinite(medicine.reorderLevel) ? medicine.reorderLevel : null
-  };
-}
-
-function normalizeRequest(row) {
-  let declinedBy = [];
-  try {
-    declinedBy = row.declinedBy ? JSON.parse(row.declinedBy) : [];
-  } catch {
-    declinedBy = [];
-  }
-  return {
-    ...row,
-    declinedBy
-  };
+export async function clearSessions() {
+  await run("DELETE FROM sessions");
 }

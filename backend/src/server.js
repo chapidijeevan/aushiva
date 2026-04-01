@@ -38,42 +38,42 @@ app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok" });
 });
 
-app.post("/api/bootstrap", (req, res) => {
-  seedIfEmpty();
+app.post("/api/bootstrap", async (req, res) => {
+  await seedIfEmpty();
   res.status(200).json({ ok: true });
 });
 
-app.get("/api/medicines", (req, res) => {
-  seedIfEmpty();
-  res.status(200).json(listMedicines());
+app.get("/api/medicines", async (req, res) => {
+  await seedIfEmpty();
+  res.status(200).json(await listMedicines());
 });
 
-app.post("/api/medicines", (req, res) => {
+app.post("/api/medicines", async (req, res) => {
   const medicine = req.body?.medicine || req.body;
   if (!medicine || !medicine.barcode || !medicine.hospital) {
     res.status(400).json({ error: "Medicine payload with barcode and hospital is required." });
     return;
   }
-  const existing = getMedicineByBarcodeAndHospital(medicine.barcode, medicine.hospital);
+  const existing = await getMedicineByBarcodeAndHospital(medicine.barcode, medicine.hospital);
   if (existing) {
     res.status(409).json({ error: "Medicine with this barcode already exists." });
     return;
   }
-  const created = createMedicine(medicine);
+  const created = await createMedicine(medicine);
   res.status(201).json(created);
 });
 
-app.put("/api/medicines", (req, res) => {
+app.put("/api/medicines", async (req, res) => {
   const medicines = req.body?.medicines;
   if (!Array.isArray(medicines)) {
     res.status(400).json({ error: "Medicines array is required." });
     return;
   }
-  replaceMedicines(medicines);
-  res.status(200).json(listMedicines());
+  await replaceMedicines(medicines);
+  res.status(200).json(await listMedicines());
 });
 
-app.put("/api/medicines/:barcode", (req, res) => {
+app.put("/api/medicines/:barcode", async (req, res) => {
   const { barcode } = req.params;
   const medicine = req.body?.medicine || req.body;
   const hospital = medicine?.hospital;
@@ -82,78 +82,78 @@ app.put("/api/medicines/:barcode", (req, res) => {
     res.status(400).json({ error: "Hospital is required to update a medicine." });
     return;
   }
-  const existing = getMedicineByBarcodeAndHospital(barcode, originalHospital);
+  const existing = await getMedicineByBarcodeAndHospital(barcode, originalHospital);
   if (!existing) {
     res.status(404).json({ error: "Medicine not found." });
     return;
   }
   if (medicine.hospital !== originalHospital) {
-    const conflict = getMedicineByBarcodeAndHospital(barcode, medicine.hospital);
+    const conflict = await getMedicineByBarcodeAndHospital(barcode, medicine.hospital);
     if (conflict) {
       res.status(409).json({ error: "Medicine with this barcode already exists for the selected hospital." });
       return;
     }
   }
-  const updated = updateMedicine(barcode, medicine, originalHospital);
+  const updated = await updateMedicine(barcode, medicine, originalHospital);
   res.status(200).json(updated);
 });
 
-app.delete("/api/medicines/:barcode", (req, res) => {
+app.delete("/api/medicines/:barcode", async (req, res) => {
   const { barcode } = req.params;
   const hospital = req.query?.hospital;
   if (!hospital) {
     res.status(400).json({ error: "Hospital is required to delete a medicine." });
     return;
   }
-  const existing = getMedicineByBarcodeAndHospital(barcode, hospital);
+  const existing = await getMedicineByBarcodeAndHospital(barcode, hospital);
   if (!existing) {
     res.status(404).json({ error: "Medicine not found." });
     return;
   }
-  deleteMedicineForHospital(barcode, hospital);
+  await deleteMedicineForHospital(barcode, hospital);
   res.status(204).end();
 });
 
-app.get("/api/exchange-requests", (req, res) => {
-  seedIfEmpty();
-  res.status(200).json(listExchangeRequests());
+app.get("/api/exchange-requests", async (req, res) => {
+  await seedIfEmpty();
+  res.status(200).json(await listExchangeRequests());
 });
 
-app.post("/api/exchange-requests", (req, res) => {
+app.post("/api/exchange-requests", async (req, res) => {
   const request = req.body?.request || req.body;
   if (!request) {
     res.status(400).json({ error: "Exchange request payload is required." });
     return;
   }
   const id = request.id || `req-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-  const created = createExchangeRequest({ ...request, id });
+  const created = await createExchangeRequest({ ...request, id });
   res.status(201).json(created);
 });
 
-app.put("/api/exchange-requests", (req, res) => {
+app.put("/api/exchange-requests", async (req, res) => {
   const requests = req.body?.requests;
   if (!Array.isArray(requests)) {
     res.status(400).json({ error: "Exchange requests array is required." });
     return;
   }
-  replaceExchangeRequests(requests);
-  res.status(200).json(listExchangeRequests());
+  await replaceExchangeRequests(requests);
+  res.status(200).json(await listExchangeRequests());
 });
 
-app.put("/api/exchange-requests/:id", (req, res) => {
+app.put("/api/exchange-requests/:id", async (req, res) => {
   const { id } = req.params;
-  if (!getExchangeRequest(id)) {
+  if (!(await getExchangeRequest(id))) {
     res.status(404).json({ error: "Exchange request not found." });
     return;
   }
-  const updated = updateExchangeRequest(id, req.body || {});
+  const updated = await updateExchangeRequest(id, req.body || {});
   res.status(200).json(updated);
 });
 
-app.post("/api/exchange-requests/:id/decision", (req, res) => {
+app.post("/api/exchange-requests/:id/decision", async (req, res) => {
   const { id } = req.params;
   const { status, declineReason, hospital } = req.body || {};
-  const result = fulfillExchangeRequest(id, { status, declineReason }, hospital);
+  const result = await fulfillExchangeRequest(id, { status, declineReason }, hospital);
   if (!result.ok) {
     res.status(400).json({ ok: false, message: result.error });
     return;
@@ -161,15 +161,15 @@ app.post("/api/exchange-requests/:id/decision", (req, res) => {
   res.status(200).json({
     ok: true,
     request: result.request,
-    medicines: listMedicines(),
-    requests: listExchangeRequests()
+    medicines: await listMedicines(),
+    requests: await listExchangeRequests()
   });
 });
 
-app.post("/api/login", (req, res) => {
-  seedIfEmpty();
+app.post("/api/login", async (req, res) => {
+  await seedIfEmpty();
   const { email, password } = req.body || {};
-  const user = email ? getUserByEmail(email) : null;
+  const user = email ? await getUserByEmail(email) : null;
   if (!user || user.password !== password) {
     res.status(401).json({ ok: false, message: "Invalid email or password" });
     return;
@@ -183,24 +183,24 @@ app.post("/api/login", (req, res) => {
     hospital: user.hospital || "",
     createdAt: new Date().toISOString()
   };
-  createSession(session);
+  await createSession(session);
   res.cookie("aushiva_session", session.id, { httpOnly: true, sameSite: "lax" });
   res.status(200).json({ ok: true, session: { email: user.email, name: user.name, role: user.role, hospital: user.hospital || "" } });
 });
 
-app.post("/api/signup", (req, res) => {
-  seedIfEmpty();
+app.post("/api/signup", async (req, res) => {
+  await seedIfEmpty();
   const { name, email, password, hospital } = req.body || {};
   if (!name || !email || !password || !hospital) {
     res.status(400).json({ ok: false, message: "Name, email, password, and hospital are required." });
     return;
   }
-  const existing = getUserByEmail(email);
+  const existing = await getUserByEmail(email);
   if (existing) {
     res.status(409).json({ ok: false, message: "An account with this email already exists." });
     return;
   }
-  const user = ensureUser({ name, email, password, role: "Inventory Manager", hospital });
+  const user = await ensureUser({ name, email, password, role: "Inventory Manager", hospital });
   const session = {
     id: crypto.randomUUID(),
     email: user.email,
@@ -209,27 +209,27 @@ app.post("/api/signup", (req, res) => {
     hospital: user.hospital || hospital,
     createdAt: new Date().toISOString()
   };
-  createSession(session);
+  await createSession(session);
   res.cookie("aushiva_session", session.id, { httpOnly: true, sameSite: "lax" });
   res.status(201).json({ ok: true, session: { email: user.email, name: user.name, role: user.role, hospital: user.hospital || hospital } });
 });
 
-app.post("/api/logout", (req, res) => {
+app.post("/api/logout", async (req, res) => {
   const sessionId = req.cookies?.aushiva_session;
   if (sessionId) {
-    deleteSession(sessionId);
+    await deleteSession(sessionId);
   }
   res.clearCookie("aushiva_session");
   res.status(200).json({ ok: true });
 });
 
-app.get("/api/session", (req, res) => {
+app.get("/api/session", async (req, res) => {
   const sessionId = req.cookies?.aushiva_session;
   if (!sessionId) {
     res.status(200).json(null);
     return;
   }
-  const session = getSession(sessionId);
+  const session = await getSession(sessionId);
   if (!session) {
     res.clearCookie("aushiva_session");
     res.status(200).json(null);

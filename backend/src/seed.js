@@ -220,20 +220,20 @@ const alertMedicines = [
   }
 ];
 
-export function seedIfEmpty() {
-  if (countMedicines() === 0) {
-    replaceMedicines(seedMedicines);
+export async function seedIfEmpty() {
+  if ((await countMedicines()) === 0) {
+    await replaceMedicines(seedMedicines);
   }
 
-  alertMedicines.forEach((medicine) => {
-    if (!getMedicineByBarcodeAndHospital(medicine.barcode, medicine.hospital)) {
-      createMedicine(medicine);
+  for (const medicine of alertMedicines) {
+    if (!(await getMedicineByBarcodeAndHospital(medicine.barcode, medicine.hospital))) {
+      await createMedicine(medicine);
     }
-  });
-
-  if (countExchangeRequests() === 0) {
-    replaceExchangeRequests(seedExchangeRequests);
   }
 
-  ensureUser(seedUser);
+  if ((await countExchangeRequests()) === 0) {
+    await replaceExchangeRequests(seedExchangeRequests);
+  }
+
+  await ensureUser(seedUser);
 }
