@@ -43,13 +43,21 @@ function normalizeMedicine(row) {
 }
 
 function serializeMedicine(medicine) {
-  // Map manufacturingDate to lowercase for Postgres compatibility
-  const { manufacturingDate, ...rest } = medicine;
   return {
-    ...rest,
-    manufacturingdate: manufacturingDate,
-    excess: medicine.excess ? true : false,
-    reorderLevel: Number.isFinite(medicine.reorderLevel) ? medicine.reorderLevel : null
+    barcode: medicine.barcode,
+    name: medicine.name,
+    batch: medicine.batch,
+    manufacturer: medicine.manufacturer,
+    category: medicine.category,
+    quantity: medicine.quantity,
+    unit: medicine.unit,
+    expiry: medicine.expiry,
+    manufacturingdate: medicine.manufacturingDate || medicine.manufacturingdate,
+    hospital: medicine.hospital,
+    price: medicine.price,
+    status: medicine.status,
+    excess: Boolean(medicine.excess),
+    reorderlevel: Number.isFinite(medicine.reorderLevel) ? medicine.reorderLevel : (Number.isFinite(medicine.reorderlevel) ? medicine.reorderlevel : null)
   };
 }
 
@@ -165,8 +173,18 @@ export async function getExchangeRequest(id) {
 
 export async function createExchangeRequest(request) {
   const payload = {
-    ...request,
-    declinedBy: request.declinedBy || []
+    id: request.id,
+    barcode: request.barcode,
+    name: request.name,
+    quantity: request.quantity,
+    unit: request.unit,
+    fromhospital: request.fromHospital || request.fromhospital,
+    targethospital: request.targetHospital || request.targethospital,
+    status: request.status,
+    direction: request.direction,
+    requestedat: request.requestedAt || request.requestedat,
+    declinereason: request.declineReason || request.declinereason || "",
+    declinedby: request.declinedBy || request.declinedby || []
   };
   const { data, error } = await supabase.from("exchange_requests").insert(payload).select().single();
   if (error) throw error;
@@ -208,9 +226,15 @@ export async function fulfillExchangeRequest(id, decision, actorHospital) {
 }
 
 export async function updateExchangeRequest(id, updates) {
+  const payload = {};
+  if (updates.status !== undefined) payload.status = updates.status;
+  if (updates.declineReason !== undefined) payload.declinereason = updates.declineReason;
+  if (updates.declinedBy !== undefined) payload.declinedby = updates.declinedBy;
+  if (updates.targetHospital !== undefined) payload.targethospital = updates.targetHospital;
+
   const { data, error } = await supabase
     .from("exchange_requests")
-    .update(updates)
+    .update(payload)
     .eq("id", id)
     .select()
     .single();
@@ -223,7 +247,21 @@ export async function replaceExchangeRequests(requests) {
   if (deleteError) throw deleteError;
   
   if (requests.length > 0) {
-    const { error: insertError } = await supabase.from("exchange_requests").insert(requests);
+    const payloads = requests.map(req => ({
+      id: req.id,
+      barcode: req.barcode,
+      name: req.name,
+      quantity: req.quantity,
+      unit: req.unit,
+      fromhospital: req.fromHospital || req.fromhospital,
+      targethospital: req.targetHospital || req.targethospital,
+      status: req.status,
+      direction: req.direction,
+      requestedat: req.requestedAt || req.requestedat,
+      declinereason: req.declineReason || req.declinereason || "",
+      declinedby: req.declinedBy || req.declinedby || []
+    }));
+    const { error: insertError } = await supabase.from("exchange_requests").insert(payloads);
     if (insertError) throw insertError;
   }
 }
