@@ -5,6 +5,11 @@ let pool;
 
 export async function initDb() {
   if (pool) return;
+  
+  // The Nuclear Option: Disables all certificate validation for the database connection.
+  // This is required on some Free tiers where Supabase's cert isn't recognized by Render.
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+  
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     console.warn("DATABASE_URL is not set. The database connection will fail if queried.");
